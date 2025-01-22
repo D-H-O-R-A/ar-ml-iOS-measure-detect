@@ -1,0 +1,2 @@
+C:/Users/note/Documents/measure ar/android/app/.cxx/Debug/5e6733x4/x86/CMakeFiles/edit_cache.dir
+C:/Users/note/Documents/measure ar/android/app/.cxx/Debug/5e6733x4/x86/CMakeFiles/rebuild_cache.dir
