@@ -3,11 +3,12 @@ import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'package:tflite_flutter/tflite_flutter.dart';
 import 'package:flutter/services.dart';
+import 'package:image/image.dart' as img;
 
 class CameraScreen extends StatefulWidget {
   final CameraDescription camera;
 
-  CameraScreen({required this.camera});
+  const CameraScreen({Key? key, required this.camera}) : super(key: key);
 
   @override
   _CameraScreenState createState() => _CameraScreenState();
@@ -30,7 +31,7 @@ class _CameraScreenState extends State<CameraScreen> {
   Future<void> _initializeCamera() async {
     _controller = CameraController(
       widget.camera,
-      ResolutionPreset.high,
+      ResolutionPreset.medium,
       enableAudio: false,
     );
 
@@ -53,72 +54,99 @@ class _CameraScreenState extends State<CameraScreen> {
 
   Future<void> _loadModelAndLabels() async {
     try {
-      // Carrega o modelo TFLite
       _interpreter = await Interpreter.fromAsset('assets/model.tflite');
-      print(_interpreter);
 
-      // Carrega os rótulos
       final labelData = await rootBundle.loadString('assets/labelmap.txt');
-      _labels = labelData.split('\n');
+      _labels = labelData.split('\n').where((label) => label.isNotEmpty).toList();
 
       setState(() {
-        _detectionResult = "Ready for Detection!";
+        _detectionResult = "Model loaded. Ready for detection!";
       });
     } catch (e) {
-      print("Erro ao carregar o modelo ou os rótulos: $e");
+      print("Error loading model or labels: $e");
       setState(() {
-        _detectionResult = "Failed to Load Model";
+        _detectionResult = "Error loading model.";
       });
     }
   }
 
   Future<void> _runModel(CameraImage image) async {
     try {
-      // Prepara os dados da imagem
       final input = _preprocessImage(image);
 
-      // Cria uma matriz para a saída do modelo
-      final output = List.generate(1, (i) => List.filled(_labels.length, 0.0));
+      final reshapedInput = input.reshape([1, 300, 300, 3]);
 
-      // Executa a inferência
-      _interpreter.run(input, output);
+      final output = List.generate(1, (_) => List.generate(_labels.length, (_) => 0.0));
 
-      // Processa os resultados
+      _interpreter.run(reshapedInput, output);
+
       final result = _postProcessOutput(output[0]);
       setState(() {
         _detectionResult = result;
       });
     } catch (e) {
-      print("Erro ao executar o modelo: $e");
+      print("Error during inference: $e");
     }
   }
 
-  Uint8List _preprocessImage(CameraImage image) {
-    // Converte a imagem para um formato compatível com o modelo
-    final inputSize = 224; // Tamanho esperado pelo modelo
-    final planes = image.planes;
+  Float32List _preprocessImage(CameraImage image) {
+    final img.Image convertedImage = _convertYUV420ToImage(image);
 
-    // Redimensiona e normaliza a imagem (exemplo genérico)
-    // Aqui você deve adaptar de acordo com o modelo
-    return Uint8List.fromList(planes[0].bytes);
-  }
+    final img.Image resizedImage = img.copyResize(
+      convertedImage,
+      width: 300,
+      height: 300,
+    );
 
-  String _postProcessOutput(List<double> output) {
-    final topPrediction = output.asMap().entries.reduce((a, b) =>
-        a.value > b.value ? a : b); // Encontra a classe com maior confiança
-
-    final label = _labels[topPrediction.key];
-    final confidence = topPrediction.value;
-
-    if (confidence > 0.5) {
-      if (label == "Class 1") {
-        return "Box";
-      } else if (label == "Class 2") {
-        return "Nothing";
+    final input = Float32List(300 * 300 * 3);
+    for (int y = 0; y < 300; y++) {
+      for (int x = 0; x < 300; x++) {
+        final pixel = resizedImage.getPixel(x, y) as img.PixelUint8;
+        print("Pixel:"+(pixel).toString());
+        final r = pixel.r; // Extrai o canal vermelho
+        final g = pixel.g;  // Extrai o canal verde
+        final b = pixel.b;         // Extrai o canal azul
+        final index = (y * 300 + x) * 3;
+        input[index] = r / 255.0;
+        input[index + 1] = g / 255.0;
+        input[index + 2] = b / 255.0;
       }
     }
 
-    return "Not Detected";
+    return input;
+  }
+
+  img.Image _convertYUV420ToImage(CameraImage image) {
+    final int width = image.width;
+    final int height = image.height;
+
+    final Uint8List yPlane = image.planes[0].bytes;
+
+    final img.Image grayscaleImage = img.Image(width: width, height: height);
+
+    for (int i = 0; i < yPlane.length; i++) {
+      final int pixelValue = yPlane[i];
+      grayscaleImage.setPixelRgb(
+        i % width,
+        i ~/ width,
+        pixelValue,
+        pixelValue,
+        pixelValue,
+      );
+    }
+
+    return grayscaleImage;
+  }
+
+  String _postProcessOutput(List<double> output) {
+    final maxIndex = output.indexWhere((value) => value == output.reduce((a, b) => a > b ? a : b));
+    final confidence = output[maxIndex];
+
+    if (confidence > 0.5) {
+      return "Detected: ${_labels[maxIndex]} (${(confidence * 100).toStringAsFixed(2)}%)";
+    }
+
+    return "No objects detected.";
   }
 
   @override
@@ -131,33 +159,31 @@ class _CameraScreenState extends State<CameraScreen> {
   @override
   Widget build(BuildContext context) {
     if (!_controller.value.isInitialized) {
-      return Center(child: CircularProgressIndicator());
+      return const Center(child: CircularProgressIndicator());
     }
 
     return Scaffold(
       appBar: AppBar(
-        title: Text('Live Detection'),
-        leading: BackButton(),
+        title: const Text('Live Detection'),
+        leading: const BackButton(),
       ),
       body: Stack(
         children: [
-          // Exibe a câmera
           RotatedBox(
             quarterTurns: 1,
             child: SizedBox.expand(
               child: CameraPreview(_controller),
             ),
           ),
-          // Texto de status da detecção
           Positioned(
             bottom: 16,
             left: 16,
             child: Container(
-              padding: EdgeInsets.all(8),
-              color: _detectionResult == "Box" ? Colors.green : Colors.red,
+              padding: const EdgeInsets.all(8),
+              color: _detectionResult.startsWith("Detected") ? Colors.green : Colors.red,
               child: Text(
                 _detectionResult,
-                style: TextStyle(
+                style: const TextStyle(
                   color: Colors.white,
                   fontSize: 18,
                 ),
