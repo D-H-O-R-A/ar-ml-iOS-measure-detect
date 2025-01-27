@@ -2,19 +2,20 @@ import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'camera_screen.dart';
+import 'ar_measure_screen.dart';
 
 late List<CameraDescription> cameras;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  
+
   // Inicializa a lista de câmeras
   try {
     cameras = await availableCameras();
   } catch (e) {
     print("Erro ao inicializar as câmeras: $e");
   }
-  
+
   runApp(MyApp());
 }
 
